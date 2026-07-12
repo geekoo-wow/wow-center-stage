@@ -2,6 +2,7 @@
 ## Title: CenterStage
 ## Notes: Confines Blizzard's system windows to the center of ultrawide screens while keeping their dynamic placement.
 ## Author: geekoo
+## Category: User Interface
 ## IconTexture: Interface\AddOns\CenterStage\Icon.png
 ## SavedVariables: CenterStageDB
 ## Version: @project-version@
