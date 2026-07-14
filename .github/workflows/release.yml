@@ -19,11 +19,11 @@ jobs:
 
       # Packages according to .pkgmeta (package-as, ignore list, changelog),
       # substitutes TOC keywords like @project-version@ from the git tag,
-      # and attaches the trimmed zip to a GitHub release for the tag.
-      # CurseForge/WoWInterface/Wago uploads activate automatically if their
-      # tokens (CF_API_KEY, WOWI_API_TOKEN, WAGO_API_TOKEN) are ever added
-      # as repository secrets.
+      # attaches the trimmed zip to a GitHub release for the tag, and
+      # uploads to CurseForge (project from X-Curse-Project-ID in the TOC)
+      # using the org-level CF_API_KEY secret.
       - name: Package and release
         uses: BigWigsMods/packager@v2
         env:
           GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
