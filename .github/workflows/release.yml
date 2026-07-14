@@ -17,6 +17,26 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Build RELEASE_NOTES.md from "Changelog:" commit trailers since the
+      # previous tag. The file is not tracked in git; the packager reads it
+      # from the working tree via the manual-changelog directive in
+      # .pkgmeta. See CLAUDE.md for the commit message convention.
+      - name: Generate release notes from commit trailers
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          prev="$(git describe --tags --abbrev=0 "${tag}^" 2>/dev/null || true)"
+          if [ -n "$prev" ]; then range="${prev}..${tag}"; else range="${tag}"; fi
+          {
+            echo "# CenterStage ${tag}"
+            echo ""
+            git log "$range" --no-merges --reverse --format='%(trailers:key=Changelog,valueonly)' \
+              | sed '/^[[:space:]]*$/d' | sed 's/^/- /'
+          } > RELEASE_NOTES.md
+          if [ "$(wc -l < RELEASE_NOTES.md)" -le 2 ]; then
+            echo "- Maintenance release." >> RELEASE_NOTES.md
+          fi
+          cat RELEASE_NOTES.md
+
       # Packages according to .pkgmeta (package-as, ignore list, changelog),
       # substitutes TOC keywords like @project-version@ from the git tag,
       # attaches the trimmed zip to a GitHub release for the tag, and
