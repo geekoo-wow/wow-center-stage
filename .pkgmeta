@@ -1,6 +1,7 @@
 package-as: CenterStage
 
 ignore:
+  - .github
   - .gitignore
   - README.md
   - RELEASE_NOTES.md
