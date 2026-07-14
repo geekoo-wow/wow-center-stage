@@ -3,6 +3,9 @@ package-as: CenterStage
 ignore:
   - .github
   - .gitignore
+  - AGENTS.md
+  - CLAUDE.md
+  - CONTRIBUTING.md
   - README.md
   - RELEASE_NOTES.md
   - .pkgmeta

@@ -20,7 +20,7 @@ jobs:
       # Build RELEASE_NOTES.md from "Changelog:" commit trailers since the
       # previous tag. The file is not tracked in git; the packager reads it
       # from the working tree via the manual-changelog directive in
-      # .pkgmeta. See CLAUDE.md for the commit message convention.
+      # .pkgmeta. See CONTRIBUTING.md for the commit message convention.
       - name: Generate release notes from commit trailers
         run: |
           tag="${GITHUB_REF_NAME}"

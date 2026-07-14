@@ -1,0 +1,1 @@
+Follow the commit message and release conventions in [CONTRIBUTING.md](CONTRIBUTING.md). In particular: release notes are generated from `Changelog:` commit trailers — never create or edit `RELEASE_NOTES.md`.
