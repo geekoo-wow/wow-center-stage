@@ -4,7 +4,8 @@ local addonName, addon = ...
 -- CenterStage
 -- ---------------------------------------------------------------------------
 -- Blizzard's UIPanel manager lays the system windows (character pane, map,
--- LFG, merchant, ...) out between two boundaries on UIParent:
+-- LFG, merchant, ...) out between two boundaries, stored as attributes on
+-- UIParent through 12.0.x and on UIPanelLayoutFrame from 12.1:
 --
 --   LEFT_OFFSET (16px)        -- the origin every layout pass anchors from;
 --                                CENTER_OFFSET / RIGHT_OFFSET derive from it.
@@ -26,8 +27,8 @@ local addonName, addon = ...
 -- Both attributes are written from a SecureHandlerAttributeTemplate snippet
 -- (the same technique Ultrawide Fix uses to resize UIParent): the addon only
 -- sets an attribute on its own handler frame, and the restricted-environment
--- snippet performs the actual UIParent writes, so the values Blizzard's
--- secure layout code reads are never tainted by addon code.
+-- snippet performs the actual attribute writes on the layout host, so the
+-- values Blizzard's secure layout code reads are never tainted by addon code.
 
 -- Aspect ratio at or above which CenterStage enables itself by default on a
 -- resolution that has no saved profile yet (21:9 = 2.33, 32:9 = 3.56;
@@ -103,20 +104,26 @@ end
 -- ---------------------------------------------------------------------------
 -- Secure attribute writer
 -- ---------------------------------------------------------------------------
+-- Blizzard's layout code reads the boundary attributes from UIParent through
+-- 12.0.x; the 12.1 PTR moves them to the dedicated UIPanelLayoutFrame
+-- (Blizzard_UIParentPanelManager/Shared/UIPanelLayoutFrame.lua, read via
+-- GetUIPanelLayoutAttribute). Target whichever host this client uses.
+local layoutHost = UIPanelLayoutFrame or UIParent
+
 -- Capture Blizzard's original values before we ever change them, so
 -- disabling the addon restores the default UI exactly.
-local originalLeftOffset = UIParent:GetAttribute("LEFT_OFFSET") or 16
-local originalRightBuffer = UIParent:GetAttribute("RIGHT_OFFSET_BUFFER") or 80
+local originalLeftOffset = layoutHost:GetAttribute("LEFT_OFFSET") or 16
+local originalRightBuffer = layoutHost:GetAttribute("RIGHT_OFFSET_BUFFER") or 80
 
 local driver = CreateFrame("Frame", "CenterStageSecureDriver", nil,
     "SecureHandlerAttributeTemplate")
-driver:SetFrameRef("uiparent", UIParent)
+driver:SetFrameRef("layouthost", layoutHost)
 driver:SetAttribute("_onattributechanged", [=[
     if name == "cs-offsets" then
         local left, buffer = strsplit(",", value)
-        local ui = self:GetFrameRef("uiparent")
-        ui:SetAttribute("LEFT_OFFSET", tonumber(left))
-        ui:SetAttribute("RIGHT_OFFSET_BUFFER", tonumber(buffer))
+        local host = self:GetFrameRef("layouthost")
+        host:SetAttribute("LEFT_OFFSET", tonumber(left))
+        host:SetAttribute("RIGHT_OFFSET_BUFFER", tonumber(buffer))
     end
 ]=])
 
@@ -134,7 +141,7 @@ local function DesiredOffsets()
     end
 
     local bandWidth = uiWidth * (profile.centerPercent / 100)
-    local minBand = (UIParent:GetAttribute("DEFAULT_FRAME_WIDTH") or 384) + 32
+    local minBand = (layoutHost:GetAttribute("DEFAULT_FRAME_WIDTH") or 384) + 32
     bandWidth = math.max(bandWidth, minBand)
 
     local left = math.max(originalLeftOffset, (uiWidth - bandWidth) / 2)
