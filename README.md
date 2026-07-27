@@ -33,3 +33,4 @@ Adjusting a setting flashes a green rectangle for a few seconds previewing the b
 
 - Window movers such as BlizzMove or MoveAny take over individual frames as you drag them; CenterStage only affects where Blizzard places windows it manages.
 - NoAutoClose / DeModal detach frames from the panel system; frames they manage are no longer positioned by Blizzard, so the origin shift won't apply to them.
+- UI suites and window managers that re-anchor or dock Blizzard windows themselves override Blizzard's placement for those frames; a frame another addon anchors can end up outside the configured band even though Blizzard's own layout respects it.
