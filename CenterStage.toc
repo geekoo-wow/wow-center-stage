@@ -5,6 +5,7 @@
 ## Category: User Interface
 ## IconTexture: Interface\AddOns\CenterStage\Icon.png
 ## SavedVariables: CenterStageDB
+## OptionalDeps: Blizzard_UIParentPanelManager
 ## Version: @project-version@
 ## X-Curse-Project-ID: 1607249
 
