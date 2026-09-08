@@ -29,6 +29,8 @@ local addonName, addon = ...
 -- sets an attribute on its own handler frame, and the restricted-environment
 -- snippet performs the actual attribute writes on the layout host, so the
 -- values Blizzard's secure layout code reads are never tainted by addon code.
+-- The host is resolved when offsets are applied, not when this file loads;
+-- see ResolveLayoutHost for why.
 
 -- Aspect ratio at or above which CenterStage enables itself by default on a
 -- resolution that has no saved profile yet (21:9 = 2.33, 32:9 = 3.56;
@@ -105,19 +107,22 @@ end
 -- Secure attribute writer
 -- ---------------------------------------------------------------------------
 -- Blizzard's layout code reads the boundary attributes from UIParent through
--- 12.0.x; the 12.1 PTR moves them to the dedicated UIPanelLayoutFrame
--- (Blizzard_UIParentPanelManager/Shared/UIPanelLayoutFrame.lua, read via
--- GetUIPanelLayoutAttribute). Target whichever host this client uses.
-local layoutHost = UIPanelLayoutFrame or UIParent
-
--- Capture Blizzard's original values before we ever change them, so
--- disabling the addon restores the default UI exactly.
-local originalLeftOffset = layoutHost:GetAttribute("LEFT_OFFSET") or 16
-local originalRightBuffer = layoutHost:GetAttribute("RIGHT_OFFSET_BUFFER") or 80
+-- 12.0.x; from 12.1 it reads them from the dedicated UIPanelLayoutFrame
+-- (Blizzard_UIParentPanelManager/Shared/UIPanelLayoutFrame.lua, via
+-- GetUIPanelLayoutAttribute). That frame is created in Lua when
+-- Blizzard_UIParentPanelManager loads, which is not guaranteed to happen
+-- before this file runs, so the host cannot be captured at load time: on a
+-- 12.1 client where our file ran first, a load-time lookup finds nil, falls
+-- back to UIParent, and every write silently goes to attributes nobody reads
+-- anymore. Resolve the host at apply time instead (all addons are loaded by
+-- the time PLAYER_ENTERING_WORLD fires) and re-point the secure writer at it
+-- whenever it changes.
+local layoutHost
+local originalLeftOffset = 16
+local originalRightBuffer = 80
 
 local driver = CreateFrame("Frame", "CenterStageSecureDriver", nil,
     "SecureHandlerAttributeTemplate")
-driver:SetFrameRef("layouthost", layoutHost)
 driver:SetAttribute("_onattributechanged", [=[
     if name == "cs-offsets" then
         local left, buffer = strsplit(",", value)
@@ -127,6 +132,24 @@ driver:SetAttribute("_onattributechanged", [=[
     end
 ]=])
 
+-- Returns the frame Blizzard's layout code reads its boundaries from on this
+-- client, binding the secure writer to it on first use or when it changes.
+-- Blizzard's original values are captured from the host before we ever write
+-- to it, so disabling the addon restores the default UI exactly. Binding
+-- writes a handler attribute, which is locked in combat; in that case the
+-- bind is left for the next out-of-combat apply (ApplyOffsets never writes
+-- in combat, so nothing can reach an unbound host).
+local function ResolveLayoutHost()
+    local host = UIPanelLayoutFrame or UIParent
+    if host ~= layoutHost and not InCombatLockdown() then
+        layoutHost = host
+        originalLeftOffset = host:GetAttribute("LEFT_OFFSET") or 16
+        originalRightBuffer = host:GetAttribute("RIGHT_OFFSET_BUFFER") or 80
+        driver:SetFrameRef("layouthost", host)
+    end
+    return host
+end
+
 -- ---------------------------------------------------------------------------
 -- Applying the offsets
 -- ---------------------------------------------------------------------------
@@ -134,6 +157,7 @@ local pendingApply = false
 local lastApplied
 
 local function DesiredOffsets()
+    local host = ResolveLayoutHost()
     local profile = GetCurrentProfile()
     local uiWidth = UIParent:GetWidth() or 0
     if not profile.enabled or uiWidth <= 0 then
@@ -141,7 +165,7 @@ local function DesiredOffsets()
     end
 
     local bandWidth = uiWidth * (profile.centerPercent / 100)
-    local minBand = (layoutHost:GetAttribute("DEFAULT_FRAME_WIDTH") or 384) + 32
+    local minBand = (host:GetAttribute("DEFAULT_FRAME_WIDTH") or 384) + 32
     bandWidth = math.max(bandWidth, minBand)
 
     local left = math.max(originalLeftOffset, (uiWidth - bandWidth) / 2)
@@ -168,12 +192,15 @@ local function ApplyOffsets()
     end
     pendingApply = false
 
+    -- Key the dedupe on the host too: if the host changed since the last
+    -- write (see ResolveLayoutHost), the same offsets must be written again.
     local left, buffer = DesiredOffsets()
     local key = string.format("%.1f,%.1f", left, buffer)
-    if key == lastApplied then
+    local applied = tostring(layoutHost) .. ":" .. key
+    if applied == lastApplied then
         return
     end
-    lastApplied = key
+    lastApplied = applied
 
     driver:SetAttribute("cs-offsets", key)
     -- Reflow any open panels immediately from the new boundaries. This is
