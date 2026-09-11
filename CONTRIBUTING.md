@@ -6,7 +6,7 @@
 
 ### Commit message format
 
-For every **user-facing** change, add one `Changelog:` trailer line per change at the end of the commit message, in the trailer block (after a blank line, alongside trailers like `Co-Authored-By`):
+For every **user-facing** change, add one `Changelog:` trailer line per change at the end of the commit message, in the trailer block (after a blank line, alongside trailers like `Co-Authored-By`). The line is matched by its `Changelog:` prefix at the start of a line, so it is still picked up if a blank line separates it from the other trailers:
 
 ```
 Short imperative subject line

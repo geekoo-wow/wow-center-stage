@@ -29,8 +29,11 @@ jobs:
           {
             echo "# CenterStage ${tag}"
             echo ""
-            git log "$range" --no-merges --reverse --format='%(trailers:key=Changelog,valueonly)' \
-              | sed '/^[[:space:]]*$/d' | sed 's/^/- /'
+            # Match "Changelog:" lines anywhere in the message body rather than
+            # via git's trailer parser, which only sees the final paragraph and
+            # silently drops a trailer separated from it by a blank line.
+            git log "$range" --no-merges --reverse --format='%B' \
+              | sed -n 's/^Changelog:[[:space:]]*//p' | sed '/^[[:space:]]*$/d' | sed 's/^/- /'
           } > RELEASE_NOTES.md
           if [ "$(wc -l < RELEASE_NOTES.md)" -le 2 ]; then
             echo "- Maintenance release." >> RELEASE_NOTES.md
