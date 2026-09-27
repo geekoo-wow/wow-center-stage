@@ -1,4 +1,4 @@
-## Interface: 120000, 120001, 120005, 120007, 120100
+## Interface: 16001, 120000, 120001, 120005, 120007, 120100
 ## Title: CenterStage
 ## Notes: Confines Blizzard's system windows to the center of ultrawide screens while keeping their dynamic placement.
 ## Author: geekoo
