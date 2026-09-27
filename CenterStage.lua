@@ -5,7 +5,7 @@ local addonName, addon = ...
 -- ---------------------------------------------------------------------------
 -- Blizzard's UIPanel manager lays the system windows (character pane, map,
 -- LFG, merchant, ...) out between two boundaries, stored as attributes on
--- UIParent on Classic Era and on retail through 12.0.x, and on
+-- UIParent on Classic Era, TBC Anniversary and retail through 12.0.x, and on
 -- UIPanelLayoutFrame on retail from 12.1 and on WoW Forever:
 --
 --   LEFT_OFFSET (16px)        -- the origin every layout pass anchors from;
@@ -108,8 +108,8 @@ end
 -- Secure attribute writer
 -- ---------------------------------------------------------------------------
 -- Blizzard's layout code reads the boundary attributes from UIParent on
--- Classic Era and on retail through 12.0.x; on retail from 12.1 and on WoW
--- Forever it reads them from the dedicated UIPanelLayoutFrame
+-- Classic Era, TBC Anniversary and retail through 12.0.x; on retail from 12.1
+-- and on WoW Forever it reads them from the dedicated UIPanelLayoutFrame
 -- (Blizzard_UIParentPanelManager/Shared/UIPanelLayoutFrame.lua, via
 -- GetUIPanelLayoutAttribute). That frame is created in Lua when
 -- Blizzard_UIParentPanelManager loads, which is not guaranteed to happen
