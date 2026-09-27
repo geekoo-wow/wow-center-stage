@@ -29,7 +29,11 @@ jobs:
           {
             echo "# CenterStage ${tag}"
             echo ""
-            git log "$range" --no-merges --reverse --format='%(trailers:key=Changelog,valueonly)' \
+            # Match "Changelog:" lines anywhere in the message body rather
+            # than via %(trailers): git only treats the last paragraph as
+            # trailers, so a blank line before Co-Authored-By hides them.
+            git log "$range" --no-merges --reverse --format='%B' \
+              | sed -n 's/^Changelog:[[:space:]]*//p' \
               | sed '/^[[:space:]]*$/d' | sed 's/^/- /'
           } > RELEASE_NOTES.md
           if [ "$(wc -l < RELEASE_NOTES.md)" -le 2 ]; then

@@ -20,7 +20,7 @@ Changelog: Added a slider to control the width of the center area.
 Rules:
 
 - Write trailer lines **for players**, describing the visible effect in the game ("Fixed the character pane opening off-screen"), not the implementation ("Refactored offset math").
-- One complete sentence per trailer, on a single line. Use multiple `Changelog:` trailers for multiple changes.
+- One complete sentence per trailer, on a single line, starting at the beginning of the line. Use multiple `Changelog:` trailers for multiple changes.
 - Past tense or noun phrase, capitalized, ending with a period.
 - Purely internal changes (CI, refactors, docs, comments) get **no** `Changelog:` trailer and stay out of the release notes automatically.
 
