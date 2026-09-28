@@ -43,11 +43,46 @@ jobs:
 
       # Packages according to .pkgmeta (package-as, ignore list, changelog),
       # substitutes TOC keywords like @project-version@ from the git tag,
-      # attaches the trimmed zip to a GitHub release for the tag, and
-      # uploads to CurseForge (project from X-Curse-Project-ID in the TOC)
-      # using the org-level CF_API_KEY secret.
-      - name: Package and release
+      # and uploads to CurseForge (project from X-Curse-Project-ID in the
+      # TOC) using the org-level CF_API_KEY secret. No GitHub token is passed
+      # on purpose: the packager publishes the GitHub release before
+      # attaching files, which the repository's immutable releases reject.
+      # The next step creates the GitHub release instead.
+      - name: Package and upload to CurseForge
         uses: BigWigsMods/packager@v2
         env:
-          GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
+
+      # Immutable releases lock a release when it is published, so create it
+      # as a draft, attach the zip and release.json, then publish. The
+      # release.json mirrors the packager's own (flavor/interface pairs from
+      # the TOC's "## Interface-*" lines) for addon managers that install
+      # from GitHub releases.
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          name="$(sed -n 's/^## Title:[[:space:]]*//p' CenterStage.toc | tr -d '\r')"
+          zip=".release/${name}-${tag}.zip"
+          test -f "$zip"
+
+          awk -F: 'tolower($1) ~ /^## interface-/ {
+                     flavor = tolower(substr($1, 14))
+                     if (flavor == "retail") flavor = "mainline"
+                     n = split($2, v, ",")
+                     for (i = 1; i <= n; i++) { gsub(/[ \t\r]/, "", v[i]); print flavor, v[i] }
+                   }' CenterStage.toc \
+            | jq -R -s -c --arg name "$name" --arg version "$tag" --arg file "${zip##*/}" '
+                { releases: [ { name: $name, version: $version, filename: $file, nolib: false,
+                  metadata: [ split("\n")[] | select(length > 0) | split(" ")
+                              | { flavor: .[0], interface: (.[1] | tonumber) } ] } ] }' \
+            > .release/release.json
+          cat .release/release.json
+
+          prerelease=()
+          case "${tag,,}" in *alpha*|*beta*) prerelease=(--prerelease) ;; esac
+          gh release create "$tag" --draft --verify-tag --title "$tag" \
+            --notes-file RELEASE_NOTES.md "${prerelease[@]}" \
+            "$zip" .release/release.json
+          gh release edit "$tag" --draft=false
