@@ -5,49 +5,13 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: write
-
+# Release notes, packaging and publishing live in the org's shared workflow:
+# https://github.com/geekoo-wow/.github
 jobs:
   release:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # Build RELEASE_NOTES.md from "Changelog:" commit trailers since the
-      # previous tag. The file is not tracked in git; the packager reads it
-      # from the working tree via the manual-changelog directive in
-      # .pkgmeta. See CONTRIBUTING.md for the commit message convention.
-      - name: Generate release notes from commit trailers
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          prev="$(git describe --tags --abbrev=0 "${tag}^" 2>/dev/null || true)"
-          if [ -n "$prev" ]; then range="${prev}..${tag}"; else range="${tag}"; fi
-          {
-            echo "# CenterStage ${tag}"
-            echo ""
-            # Match "Changelog:" lines anywhere in the message body rather
-            # than via %(trailers): git only treats the last paragraph as
-            # trailers, so a blank line before Co-Authored-By hides them.
-            git log "$range" --no-merges --reverse --format='%B' \
-              | sed -n 's/^Changelog:[[:space:]]*//p' \
-              | sed '/^[[:space:]]*$/d' | sed 's/^/- /'
-          } > RELEASE_NOTES.md
-          if [ "$(wc -l < RELEASE_NOTES.md)" -le 2 ]; then
-            echo "- Maintenance release." >> RELEASE_NOTES.md
-          fi
-          cat RELEASE_NOTES.md
-
-      # Packages according to .pkgmeta (package-as, ignore list, changelog),
-      # substitutes TOC keywords like @project-version@ from the git tag,
-      # attaches the trimmed zip to a GitHub release for the tag, and
-      # uploads to CurseForge (project from X-Curse-Project-ID in the TOC)
-      # using the org-level CF_API_KEY secret.
-      - name: Package and release
-        uses: BigWigsMods/packager@v2
-        env:
-          GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
-          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+    uses: geekoo-wow/.github/.github/workflows/addon-release.yml@v1
+    permissions:
+      contents: write
+    with:
+      addon-name: CenterStage   # heading of the release notes
+    secrets: inherit
