@@ -32,6 +32,10 @@ local addonName, addon = ...
 -- values Blizzard's secure layout code reads are never tainted by addon code.
 -- The host is resolved when offsets are applied, not when this file loads;
 -- see ResolveLayoutHost for why.
+--
+-- The bag windows are not UIPanels and never see those boundaries; the "Bag
+-- windows" section below slides them into the band with a post-hook on
+-- Blizzard's own bag layout function.
 
 -- Aspect ratio at or above which CenterStage enables itself by default on a
 -- resolution that has no saved profile yet (21:9 = 2.33, 32:9 = 3.56;
@@ -89,6 +93,11 @@ local function GetCurrentProfile()
         merged.enabled = profile.enabled
     else
         merged.enabled = IsUltrawide()
+    end
+    if profile and profile.bags ~= nil then
+        merged.bags = profile.bags
+    else
+        merged.bags = true
     end
     return merged
 end
@@ -185,6 +194,144 @@ local function DesiredOffsets()
     return left, buffer
 end
 
+-- ---------------------------------------------------------------------------
+-- Bag windows
+-- ---------------------------------------------------------------------------
+-- The bag windows are not UIPanels. ContainerFrame.lua lays them out itself
+-- in UpdateContainerFrameAnchors: the first shown bag is anchored to its
+-- parent's BOTTOMRIGHT, offset left by the width of the right action bars,
+-- and the others chain off it (WoW Forever and retail chain every further
+-- column off the first bag; Classic Era and TBC anchor every column head to
+-- the parent). Nothing in there reads the layout boundaries, so on an
+-- ultrawide the bags stay glued to the far right while the dock sits in the
+-- band.
+--
+-- Blizzard reruns that function on every bag open/close, resolution change,
+-- bank open/close and from its secure frame manager (action bar and Edit
+-- Mode changes), so we post-hook it: whenever the band's right limit lies
+-- left of where Blizzard put the stack, every bag anchored to the parent is
+-- slid left by the difference and the chained bags follow. The combined bag
+-- (parented to UIParent) and the individual bags (parented to
+-- ContainerFrameContainer on Forever/retail, UIParent on Classic Era/TBC)
+-- all anchor to their parent's BOTTOMRIGHT, so one rule covers both modes.
+-- The frames are not protected, so this is ordinary SetPoint work that is
+-- allowed in combat too.
+
+local function ForEachShownBag(callback)
+    if ContainerFrameCombinedBags and ContainerFrameCombinedBags:IsShown() then
+        callback(ContainerFrameCombinedBags)
+    end
+    for i = 1, NUM_CONTAINER_FRAMES or 13 do
+        local bag = _G["ContainerFrame" .. i]
+        if bag and bag:IsShown() then
+            callback(bag)
+        end
+    end
+end
+
+-- Returns the bag's anchor offsets if Blizzard anchored it to its parent's
+-- BOTTOMRIGHT (the anchor UpdateContainerFrameAnchors gives the first bag and
+-- every column head); nil for bags chained to another bag or re-anchored by
+-- a window mover, which are left alone.
+local function GetParentAnchor(bag)
+    local point, relativeTo, relativePoint, x, y = bag:GetPoint(1)
+    if point == "BOTTOMRIGHT" and relativePoint == "BOTTOMRIGHT"
+        and (relativeTo == nil or relativeTo == bag:GetParent()) then
+        return x, y
+    end
+end
+
+-- Anchor offsets and edge coordinates are expressed in a frame's own
+-- effective scale (Blizzard shrinks tall bag stacks); the band is measured
+-- in UIParent units.
+local function UIParentUnitsPerUnit(frame)
+    return frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
+end
+
+local function ShiftBagAnchors()
+    local profile = GetCurrentProfile()
+    if not profile.enabled or not profile.bags then
+        return
+    end
+
+    -- Blizzard's own distance from the screen's right edge is that of the
+    -- rightmost parent-anchored bag; also note the stack's left edge for the
+    -- bank clearance below.
+    local blizzardOffset, stackLeft
+    ForEachShownBag(function(bag)
+        local x = GetParentAnchor(bag)
+        if x then
+            local offset = -x * UIParentUnitsPerUnit(bag)
+            if not blizzardOffset or offset < blizzardOffset then
+                blizzardOffset = offset
+            end
+        end
+        local left = bag:GetLeft()
+        if left then
+            left = left * UIParentUnitsPerUnit(bag)
+            if not stackLeft or left < stackLeft then
+                stackLeft = left
+            end
+        end
+    end)
+    if not blizzardOffset then
+        return
+    end
+
+    -- Put the stack's right edge on the band's right limit, never further
+    -- right than Blizzard's own position next to the right action bars.
+    local _, buffer = DesiredOffsets()
+    local shift = buffer - blizzardOffset
+
+    -- Blizzard shrinks the stack rather than let it cover an open bank
+    -- window (its left edge must stay at BankFrame:GetRight() - 25 or
+    -- beyond). That check is measured from the real screen edge, so cap the
+    -- shift to keep the same clearance.
+    if BankFrame and BankFrame:IsShown() and stackLeft then
+        local bankRight = BankFrame:GetRight()
+        if bankRight then
+            bankRight = bankRight * UIParentUnitsPerUnit(BankFrame)
+            shift = math.min(shift, stackLeft - (bankRight - 25))
+        end
+    end
+    if shift <= 0 then
+        return
+    end
+
+    ForEachShownBag(function(bag)
+        local x, y = GetParentAnchor(bag)
+        if x then
+            bag:SetPoint("BOTTOMRIGHT", bag:GetParent(), "BOTTOMRIGHT",
+                x - shift / UIParentUnitsPerUnit(bag), y)
+        end
+    end)
+end
+
+-- Re-lays the open bags out from the current band. Always goes through
+-- Blizzard's function so the stack is rebuilt from its default position
+-- first and the hook applies the shift exactly once; calling
+-- ShiftBagAnchors on its own would pile shifts up.
+local function RefreshBagAnchors()
+    if not UpdateContainerFrameAnchors then
+        return
+    end
+    local anyShown = false
+    ForEachShownBag(function() anyShown = true end)
+    if anyShown then
+        UpdateContainerFrameAnchors()
+    end
+end
+
+local bagHookInstalled = false
+
+local function InstallBagHook()
+    if bagHookInstalled or not UpdateContainerFrameAnchors then
+        return
+    end
+    bagHookInstalled = true
+    hooksecurefunc("UpdateContainerFrameAnchors", ShiftBagAnchors)
+end
+
 local function ApplyOffsets()
     -- Attribute writes on secure handler frames are locked during combat;
     -- queue and re-apply on PLAYER_REGEN_ENABLED.
@@ -209,6 +356,7 @@ local function ApplyOffsets()
     -- the same insecure-callable entry point addons have always used; the
     -- actual repositioning runs in Blizzard's secure delegate.
     UpdateUIPanelPositions()
+    RefreshBagAnchors()
 end
 
 -- ---------------------------------------------------------------------------
@@ -306,6 +454,26 @@ local function BuildSettingsMenu()
         "Width of the centered area windows are confined to, as a " ..
         "percentage of screen width. On a 32:9 screen, 50% is exactly the " ..
         "middle 16:9. 100% spans the full width (Blizzard default).")
+
+    local bagsSetting = Settings.RegisterProxySetting(
+        category,
+        "CenterStage_Bags",
+        "boolean",
+        "Include bag windows",
+        true,
+        function() return GetCurrentProfile().bags end,
+        function(value)
+            SetCurrentProfileValue("bags", value)
+            RefreshBagAnchors()
+            ShowPreview()
+        end
+    )
+    Settings.CreateCheckbox(category, bagsSetting,
+        "Open the bag windows (combined or individual) against the right " ..
+        "edge of the band instead of the right edge of the screen. Blizzard " ..
+        "still stacks, scales and wraps them; they are only slid left, and " ..
+        "never further right than Blizzard's own position next to the right " ..
+        "action bars.")
 end
 
 SLASH_CENTERSTAGE1 = "/centerstage"
@@ -330,12 +498,18 @@ frame:SetScript("OnEvent", function(self, event, arg1)
         if arg1 == addonName then
             InitializeSettings()
             BuildSettingsMenu()
+            InstallBagHook()
         end
     elseif event == "PLAYER_REGEN_ENABLED" then
         if pendingApply then
             ApplyOffsets()
         end
     else
+        if event == "PLAYER_ENTERING_WORLD" then
+            -- Blizzard_UIPanels_Game normally loads before us; make sure the
+            -- hook is in place once every addon is.
+            InstallBagHook()
+        end
         -- Resolution or scale changed (or fresh login): defer one frame so
         -- Blizzard finishes its own re-layout first, then re-apply since the
         -- percentages resolve against the new UIParent width.
