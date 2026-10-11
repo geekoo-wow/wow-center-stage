@@ -16,7 +16,9 @@ The bag windows are not part of that dock: Blizzard lays them out separately, st
 
 If you use [EllesmereUI](https://www.curseforge.com/wow/addons/ellesmereui), its bag and bank windows are covered by the same option: the bag window opens against the right edge of the band and the bank window against the left edge, instead of the corners of the screen. A window you have dragged somewhere yourself stays where you put it.
 
-Native center popups (game menu, death recap) and fullscreen panels are unaffected; they were already centered.
+The Trading Post and the Barber Shop are a third case. They cover the whole screen, Blizzard hides the rest of the UI behind them, and their panels hang off the screen's edges, so on an ultrawide the Trading Post's product list and its details column sit at opposite ends of the screen with the model in between. CenterStage pulls both interfaces into the band (optional, on by default); the 3D model stays centered and Blizzard keeps laying out everything inside.
+
+Native center popups (game menu, death recap) and cinematics are unaffected; they were already centered.
 
 ## How it works
 
@@ -26,6 +28,8 @@ Bag windows never read those boundaries, so they are handled with a post-hook on
 
 EllesmereUI's bag and bank windows are plain frames that EllesmereUI anchors to the screen's corners itself (the bag window once at login, the bank window on every bank open); a dragged window is restored from its profile with a differently shaped anchor. CenterStage hooks each window's `OnShow` and, whenever the band changes, re-anchors any window still carrying EllesmereUI's default anchor (or the one CenterStage gave it) against the band's edge, and leaves dragged windows alone. EllesmereUI is an optional dependency so that its frames exist when CenterStage loads; without it, this part does nothing.
 
+The Trading Post and the Barber Shop are UIPanels of area `full`, which the panel manager never positions: showing one hides UIParent and shows the frame, a single parentless frame anchored to the screen's corners with everything inside anchored to its edges. CenterStage re-anchors that root frame to the band from a post-hook on its `OnShow` and again whenever the band changes, and restores Blizzard's anchors when the option is off. The Barber Shop's customization frame, which Blizzard reparents into it, is anchored to it as well. Neither frame is protected and the secure layout code never touches their position, so no secure handler is involved. The hook only engages while the panel registry lists the frame as fullscreen, which leaves Classic Era's small Barber Shop window alone.
+
 ## Settings
 
 Open with `/centerstage` or via Options → AddOns → CenterStage. Settings are saved **per resolution**, so a 32:9 monitor and a 16:9 monitor on the same machine each keep their own configuration.
@@ -33,6 +37,7 @@ Open with `/centerstage` or via Options → AddOns → CenterStage. Settings are
 - **Enable on this resolution** — defaults to on for aspect ratios 18:9 and wider, off otherwise. Disabling restores Blizzard's original boundaries exactly.
 - **Center area width** — width of the centered band windows are confined to, as a percentage of screen width. 100% spans the full width, which is Blizzard's default behavior.
 - **Include bag windows** — on by default. Opens the bag windows (combined or individual) against the right edge of the band instead of the right edge of the screen. Bags are only ever slid left, never further right than Blizzard's own position next to the right action bars. With EllesmereUI, its bag window opens against the right edge of the band and its bank window against the left edge, unless you have dragged them elsewhere.
+- **Include fullscreen interfaces** — on by default. Opens the Trading Post and the Barber Shop inside the band instead of across the whole screen. The dock's left margin and minimap reserve do not apply to them (the rest of the UI is hidden while they are open), so at 100% they sit exactly where Blizzard puts them.
 
 The default width for each resolution is its centered 16:9 slice — windows land where they would on a regular 16:9 monitor: 50% on 32:9, ~74% on 21:9 (3440×1440), approaching 100% (Blizzard default) as the screen narrows toward 16:9.
 
@@ -45,3 +50,4 @@ Adjusting a setting flashes a green rectangle for a few seconds previewing the b
 - Bag replacements (Bagnon, AdiBags, BetterBags, ElvUI's bags, ...) hide Blizzard's bag windows and draw their own; the bag option only moves Blizzard's and leaves those alone. EllesmereUI's bags are the exception: its bag and bank windows are placed against the band by the same option, as described above.
 - NoAutoClose / DeModal detach frames from the panel system; frames they manage are no longer positioned by Blizzard, so the origin shift won't apply to them.
 - UI suites and window managers that re-anchor or dock Blizzard windows themselves override Blizzard's placement for those frames; a frame another addon anchors can end up outside the configured band even though Blizzard's own layout respects it.
+- The Trading Post does not exist on WoW Forever, Classic Era or TBC Anniversary, and the Barber Shop on Classic Era and TBC Anniversary is a small window that needs no help, so the fullscreen option has nothing to do there. The 12.0 House Editor also fills the screen but is deliberately left alone: it is an in-world editor whose panels sit at the screen edges by design.

@@ -37,7 +37,9 @@ local addonName, addon = ...
 -- windows" section below slides them into the band with a post-hook on
 -- Blizzard's own bag layout function. EllesmereUI's replacement bag and bank
 -- windows are covered by the "EllesmereUI windows" section under the same
--- option.
+-- option. The Trading Post and the Barber Shop are UIPanels of area "full",
+-- which the layout pass never positions either; the "Fullscreen
+-- interfaces" section re-anchors them into the band.
 
 -- Aspect ratio at or above which CenterStage enables itself by default on a
 -- resolution that has no saved profile yet (21:9 = 2.33, 32:9 = 3.56;
@@ -100,6 +102,11 @@ local function GetCurrentProfile()
         merged.bags = profile.bags
     else
         merged.bags = true
+    end
+    if profile and profile.fullscreen ~= nil then
+        merged.fullscreen = profile.fullscreen
+    else
+        merged.fullscreen = true
     end
     return merged
 end
@@ -169,17 +176,26 @@ end
 local pendingApply = false
 local lastApplied
 
-local function DesiredOffsets()
+-- Width of the band in UIParent units, never less than one default panel
+-- width plus its spacing, together with the UIParent width it was measured
+-- against; nil when the addon is disabled on this resolution.
+local function DesiredBandWidth()
     local host = ResolveLayoutHost()
     local profile = GetCurrentProfile()
     local uiWidth = UIParent:GetWidth() or 0
     if not profile.enabled or uiWidth <= 0 then
-        return originalLeftOffset, originalRightBuffer
+        return nil
     end
-
     local bandWidth = uiWidth * (profile.centerPercent / 100)
     local minBand = (host:GetAttribute("DEFAULT_FRAME_WIDTH") or 384) + 32
-    bandWidth = math.max(bandWidth, minBand)
+    return math.max(bandWidth, minBand), uiWidth
+end
+
+local function DesiredOffsets()
+    local bandWidth, uiWidth = DesiredBandWidth()
+    if not bandWidth then
+        return originalLeftOffset, originalRightBuffer
+    end
 
     local left = math.max(originalLeftOffset, (uiWidth - bandWidth) / 2)
 
@@ -446,6 +462,179 @@ local function InstallEllesmereHooks()
     end
 end
 
+-- ---------------------------------------------------------------------------
+-- Fullscreen interfaces
+-- ---------------------------------------------------------------------------
+-- The Trading Post (PerksProgramFrame) and the Barber Shop (BarberShopFrame)
+-- are registered UIPanels, but with area "full", which the panel manager
+-- treats unlike every other area: FramePositionDelegate:SetUIPanel(
+-- "fullscreen", frame) hides UIParent and shows the frame, and the layout
+-- pass never anchors it or runs a capacity check on it, so the boundaries
+-- above never reach it. Each is a single parentless frame anchored to the
+-- screen's corners (Blizzard_PerksProgram.xml, Blizzard_BarberShopUI.xml)
+-- with everything inside hanging off its edges: the Trading Post's product
+-- list sits against the left edge and its details and cart column against
+-- the right edge; the Barber Shop's categories and options column against
+-- the right edge and its camera buttons against the left. On an ultrawide
+-- those columns end up at opposite ends of the screen.
+--
+-- Nothing in either addon reads the frame's rect or the screen size, so
+-- re-anchoring that one root frame confines the whole interface. Its
+-- corners are anchored to UIParent's, inset on each side by half the
+-- difference between the screen and the band: anchoring only reads
+-- UIParent's rect (nothing is written to UIParent, and the frame is not
+-- parented to it, so it stays visible while UIParent is hidden), and the
+-- band is already measured in UIParent units. The dock's left margin and
+-- minimap reserve are not applied: UIParent, minimap included, is hidden
+-- while these interfaces are open, and at 100% the frame must sit exactly
+-- where Blizzard put it. Offsets are converted into the frame's own scale
+-- (the Trading Post ignores UIParent's scale and caps its own at 0.75).
+-- The Barber Shop reparents the shared CharCustomizeFrame, which carries
+-- the categories and options column, into itself but leaves it anchored to
+-- UIParent's corners, so that frame is anchored to the Barber Shop frame
+-- as well.
+--
+-- Both are plain unprotected frames the secure delegate never positions,
+-- so this is ordinary SetPoint work. The Blizzard addons load on demand,
+-- so the hooks are installed from ADDON_LOADED. Each frame is placed from a
+-- post-hook on its OnShow (after Blizzard's own OnShow handlers, which set
+-- the frame's scale) and again on every band change. Blizzard's anchors
+-- are captured before the first write, so turning the option off restores
+-- them exactly. The 3D content is unaffected: the Trading Post's model
+-- scene is centered in the frame, and the Barber Shop's character is drawn
+-- by the engine's camera in the middle of the screen. A frame is only
+-- handled while the panel registry lists it with area "full": on Classic
+-- Era and TBC Anniversary the Barber Shop is a small window parented to
+-- UIParent that needs no help, and the registry check leaves it alone. The
+-- House Editor (12.0 housing) uses the same mechanism but is deliberately
+-- left out: it is an in-world editor whose panels hug the screen edges by
+-- design.
+
+local FULLSCREEN_PANELS = {
+    -- Blizzard_PerksProgram (retail only; not loaded on WoW Forever).
+    { global = "PerksProgramFrame" },
+    -- Blizzard_BarbershopUI, with the Blizzard_CharacterCustomize frame it
+    -- reparents into itself.
+    { global = "BarberShopFrame", content = "CharCustomizeFrame" },
+}
+
+-- Blizzard's own anchors of every frame we touch, captured before our first
+-- write, and the root frames currently carrying ours.
+local originalAnchors = {}
+local fullscreenPlaced = {}
+
+local function CaptureAnchors(frame)
+    if originalAnchors[frame] then
+        return
+    end
+    local points = {}
+    for i = 1, frame:GetNumPoints() do
+        local point, relativeTo, relativePoint, x, y = frame:GetPoint(i)
+        points[i] = { point = point, relativeTo = relativeTo,
+            relativePoint = relativePoint, x = x, y = y }
+    end
+    originalAnchors[frame] = points
+end
+
+local function RestoreAnchors(frame)
+    local points = originalAnchors[frame]
+    frame:ClearAllPoints()
+    if points and #points > 0 then
+        for _, p in ipairs(points) do
+            frame:SetPoint(p.point, p.relativeTo, p.relativePoint, p.x, p.y)
+        end
+    else
+        -- Blizzard anchors these frames to all four corners of their
+        -- parent (the screen itself for the root frames).
+        frame:SetAllPoints()
+    end
+end
+
+-- True while the panel manager's registry lists the frame as a fullscreen
+-- panel. The registry is a plain table; reading it is harmless.
+local function IsFullscreenPanel(name)
+    local attributes = UIPanelWindows and UIPanelWindows[name]
+    return attributes ~= nil and attributes.area == "full"
+end
+
+-- Inset to apply on each side of a fullscreen frame, in UIParent units; nil
+-- when the option or the addon is off, or the band spans the full width.
+local function FullscreenInset()
+    local profile = GetCurrentProfile()
+    if not profile.enabled or not profile.fullscreen then
+        return nil
+    end
+    local bandWidth, uiWidth = DesiredBandWidth()
+    if not bandWidth then
+        return nil
+    end
+    local inset = (uiWidth - bandWidth) / 2
+    if inset < 0.5 then
+        return nil
+    end
+    return inset
+end
+
+local function PlaceFullscreenPanel(spec)
+    local frame = _G[spec.global]
+    if not frame or not originalAnchors[frame] then
+        return
+    end
+    local content = spec.content and _G[spec.content]
+    local inset = FullscreenInset()
+    if inset then
+        -- Anchor offsets are in the frame's own scale; the band is
+        -- measured in UIParent units.
+        local offset = inset / UIParentUnitsPerUnit(frame)
+        frame:ClearAllPoints()
+        frame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", offset, 0)
+        frame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", -offset, 0)
+        if content then
+            content:ClearAllPoints()
+            content:SetAllPoints(frame)
+        end
+        fullscreenPlaced[frame] = true
+    elseif fullscreenPlaced[frame] then
+        RestoreAnchors(frame)
+        if content then
+            RestoreAnchors(content)
+        end
+        fullscreenPlaced[frame] = nil
+    end
+end
+
+-- Re-places every open fullscreen frame from the current band.
+local function PlaceFullscreenPanels()
+    for _, spec in ipairs(FULLSCREEN_PANELS) do
+        local frame = _G[spec.global]
+        if frame and frame:IsShown() then
+            PlaceFullscreenPanel(spec)
+        end
+    end
+end
+
+local fullscreenHooked = {}
+
+local function InstallFullscreenHooks()
+    for _, spec in ipairs(FULLSCREEN_PANELS) do
+        local frame = _G[spec.global]
+        if frame and not fullscreenHooked[frame]
+            and IsFullscreenPanel(spec.global) then
+            fullscreenHooked[frame] = true
+            CaptureAnchors(frame)
+            local content = spec.content and _G[spec.content]
+            if content then
+                CaptureAnchors(content)
+            end
+            -- Runs after Blizzard's own OnShow handlers, and so after the
+            -- frame's scale has been set for this show.
+            frame:HookScript("OnShow", function()
+                PlaceFullscreenPanel(spec)
+            end)
+        end
+    end
+end
+
 local function ApplyOffsets()
     -- Attribute writes on secure handler frames are locked during combat;
     -- queue and re-apply on PLAYER_REGEN_ENABLED.
@@ -469,11 +658,13 @@ local function ApplyOffsets()
         UpdateUIPanelPositions()
     end
 
-    -- The bag placements depend on the enabled flag as well as the offsets,
-    -- which a toggle on a 100% band leaves unchanged, so they run outside
-    -- the dedupe; both are cheap no-ops while nothing is open.
+    -- The bag and fullscreen placements depend on the enabled flag as well
+    -- as the offsets, which a toggle on a 100% band leaves unchanged, so
+    -- they run outside the dedupe; all are cheap no-ops while nothing is
+    -- open.
     RefreshBagAnchors()
     PlaceEllesmereWindows()
+    PlaceFullscreenPanels()
 end
 
 -- ---------------------------------------------------------------------------
@@ -594,6 +785,27 @@ local function BuildSettingsMenu()
         "action bars. With EllesmereUI, its bag window opens against the " ..
         "right edge of the band and its bank window against the left edge, " ..
         "unless you have dragged them somewhere else.")
+
+    local fullscreenSetting = Settings.RegisterProxySetting(
+        category,
+        "CenterStage_Fullscreen",
+        "boolean",
+        "Include fullscreen interfaces",
+        true,
+        function() return GetCurrentProfile().fullscreen end,
+        function(value)
+            SetCurrentProfileValue("fullscreen", value)
+            PlaceFullscreenPanels()
+            ShowPreview()
+        end
+    )
+    Settings.CreateCheckbox(category, fullscreenSetting,
+        "Confine the Trading Post and the Barber Shop to the band as well. " ..
+        "These interfaces cover the whole screen and are not placed by " ..
+        "Blizzard's window layout: their lists, panels and buttons hang " ..
+        "off the screen's edges, so on an ultrawide the Trading Post's " ..
+        "product list and its details column end up at opposite ends of " ..
+        "the screen. The 3D model stays centered.")
 end
 
 SLASH_CENTERSTAGE1 = "/centerstage"
@@ -621,6 +833,9 @@ frame:SetScript("OnEvent", function(self, event, arg1)
             InstallBagHook()
             InstallEllesmereHooks()
         end
+        -- The Trading Post and Barber Shop addons load on demand, so look
+        -- for their frames after every addon load.
+        InstallFullscreenHooks()
     elseif event == "PLAYER_REGEN_ENABLED" then
         if pendingApply then
             ApplyOffsets()
@@ -632,6 +847,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
             -- is.
             InstallBagHook()
             InstallEllesmereHooks()
+            InstallFullscreenHooks()
         end
         -- Resolution or scale changed (or fresh login): defer one frame so
         -- Blizzard finishes its own re-layout first, then re-apply since the
