@@ -14,6 +14,8 @@ CenterStage moves both boundaries the layout lives between. Every layout pass in
 
 The bag windows are not part of that dock: Blizzard lays them out separately, stacked up from the bottom-right corner of the screen. CenterStage slides that stack left so it opens against the right edge of the band instead (optional, on by default). Blizzard still stacks, scales and wraps the bags into columns exactly as before.
 
+If you use [EllesmereUI](https://www.curseforge.com/wow/addons/ellesmereui), its bag and bank windows are covered by the same option: the bag window opens against the right edge of the band and the bank window against the left edge, instead of the corners of the screen. A window you have dragged somewhere yourself stays where you put it.
+
 Native center popups (game menu, death recap) and fullscreen panels are unaffected; they were already centered.
 
 ## How it works
@@ -22,13 +24,15 @@ The addon never writes UIParent attributes from insecure code. A `SecureHandlerA
 
 Bag windows never read those boundaries, so they are handled with a post-hook on Blizzard's `UpdateContainerFrameAnchors`: after each of Blizzard's own layouts, the bags anchored to the screen's right edge are moved left by the distance between the screen's right edge and the band's, and the bags chained to them follow. Bag frames are not protected, so no secure handler is involved and the move also works in combat. The combined bag and the individual bags are both covered, and the shift is capped so an open bank window keeps the clearance Blizzard's own layout gives it.
 
+EllesmereUI's bag and bank windows are plain frames that EllesmereUI anchors to the screen's corners itself (the bag window once at login, the bank window on every bank open); a dragged window is restored from its profile with a differently shaped anchor. CenterStage hooks each window's `OnShow` and, whenever the band changes, re-anchors any window still carrying EllesmereUI's default anchor (or the one CenterStage gave it) against the band's edge, and leaves dragged windows alone. EllesmereUI is an optional dependency so that its frames exist when CenterStage loads; without it, this part does nothing.
+
 ## Settings
 
 Open with `/centerstage` or via Options → AddOns → CenterStage. Settings are saved **per resolution**, so a 32:9 monitor and a 16:9 monitor on the same machine each keep their own configuration.
 
 - **Enable on this resolution** — defaults to on for aspect ratios 18:9 and wider, off otherwise. Disabling restores Blizzard's original boundaries exactly.
 - **Center area width** — width of the centered band windows are confined to, as a percentage of screen width. 100% spans the full width, which is Blizzard's default behavior.
-- **Include bag windows** — on by default. Opens the bag windows (combined or individual) against the right edge of the band instead of the right edge of the screen. Bags are only ever slid left, never further right than Blizzard's own position next to the right action bars.
+- **Include bag windows** — on by default. Opens the bag windows (combined or individual) against the right edge of the band instead of the right edge of the screen. Bags are only ever slid left, never further right than Blizzard's own position next to the right action bars. With EllesmereUI, its bag window opens against the right edge of the band and its bank window against the left edge, unless you have dragged them elsewhere.
 
 The default width for each resolution is its centered 16:9 slice — windows land where they would on a regular 16:9 monitor: 50% on 32:9, ~74% on 21:9 (3440×1440), approaching 100% (Blizzard default) as the screen narrows toward 16:9.
 
@@ -38,6 +42,6 @@ Adjusting a setting flashes a green rectangle for a few seconds previewing the b
 
 - Game versions: Retail (12.0 and 12.1), WoW Forever, Classic Era and TBC Anniversary.
 - Window movers such as BlizzMove or MoveAny take over individual frames as you drag them; CenterStage only affects where Blizzard places windows it manages and the default bag windows.
-- Bag replacements (Bagnon, AdiBags, BetterBags, ElvUI's bags, ...) hide Blizzard's bag windows and draw their own; the bag option only moves Blizzard's and leaves those alone.
+- Bag replacements (Bagnon, AdiBags, BetterBags, ElvUI's bags, ...) hide Blizzard's bag windows and draw their own; the bag option only moves Blizzard's and leaves those alone. EllesmereUI's bags are the exception: its bag and bank windows are placed against the band by the same option, as described above.
 - NoAutoClose / DeModal detach frames from the panel system; frames they manage are no longer positioned by Blizzard, so the origin shift won't apply to them.
 - UI suites and window managers that re-anchor or dock Blizzard windows themselves override Blizzard's placement for those frames; a frame another addon anchors can end up outside the configured band even though Blizzard's own layout respects it.

@@ -35,7 +35,9 @@ local addonName, addon = ...
 --
 -- The bag windows are not UIPanels and never see those boundaries; the "Bag
 -- windows" section below slides them into the band with a post-hook on
--- Blizzard's own bag layout function.
+-- Blizzard's own bag layout function. EllesmereUI's replacement bag and bank
+-- windows are covered by the "EllesmereUI windows" section under the same
+-- option.
 
 -- Aspect ratio at or above which CenterStage enables itself by default on a
 -- resolution that has no saved profile yet (21:9 = 2.33, 32:9 = 3.56;
@@ -332,6 +334,118 @@ local function InstallBagHook()
     hooksecurefunc("UpdateContainerFrameAnchors", ShiftBagAnchors)
 end
 
+-- ---------------------------------------------------------------------------
+-- EllesmereUI windows
+-- ---------------------------------------------------------------------------
+-- EllesmereUI replaces Blizzard's bags with its own bag window
+-- (EUI_MainBagFrame) and bank window (EUI_BankFrame), neither of which is a
+-- UIPanel. EllesmereUIBags.lua anchors the bag window once, half a second
+-- after login, to the bottom-right corner of the screen, and
+-- EllesmereUIBags_Bank.lua re-anchors the bank window to the top-left corner
+-- every time a bank opens; a window the player has dragged is saved in
+-- EllesmereUI's profile and restored to that spot instead, with a
+-- differently shaped anchor. The detached reagent bag, the bag-slot strip
+-- and the bank's bag-slot window hang off those two frames and follow them.
+--
+-- Under the same "Include bag windows" option, that automatic placement is
+-- measured from the band instead of the screen: the bag window opens against
+-- the band's right edge and the bank window against its left edge. Only a
+-- window still carrying EllesmereUI's default anchor, or the one we gave it,
+-- is moved; a dragged window no longer matches and keeps its saved spot, and
+-- should EllesmereUI ever change its defaults this simply stops matching.
+-- The windows are placed from an OnShow hook on each (EllesmereUI anchors
+-- both before showing them) and again on every band change. They are plain
+-- unprotected frames, so this is ordinary SetPoint work that is allowed in
+-- combat too. EllesmereUIBags is an optional dependency, so its frames exist
+-- by the time this file runs; on clients where EllesmereUI stands down they
+-- are never created and all of this is a no-op.
+
+local ELLESMERE_WINDOWS = {
+    -- EllesmereUIBags.lua, StartAddon:
+    --   EUI_Bags:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", -50, 50)
+    { global = "EUI_MainBagFrame", point = "BOTTOMRIGHT", defaultX = -50, edge = "right" },
+    -- EllesmereUIBags_Bank.lua, BANKFRAME_OPENED:
+    --   EUI_Bank:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 15, -100)
+    { global = "EUI_BankFrame", point = "TOPLEFT", defaultX = 15, edge = "left" },
+}
+
+-- The x offset we last gave each window, so a band change recognises a
+-- window we placed and moves it again.
+local ellesmerePlaced = {}
+
+-- Returns the window's anchor offsets if it carries the automatic placement
+-- (EllesmereUI's default anchor, or the one we last set); nil for a window
+-- the player dragged, which EllesmereUI anchors differently.
+local function GetEllesmereAutoAnchor(window, spec)
+    if window:GetNumPoints() ~= 1 then
+        return
+    end
+    local point, relativeTo, relativePoint, x, y = window:GetPoint(1)
+    if point ~= spec.point or relativePoint ~= spec.point
+        or (relativeTo ~= nil and relativeTo ~= UIParent) then
+        return
+    end
+    local placed = ellesmerePlaced[window]
+    if math.abs(x - spec.defaultX) < 0.5
+        or (placed and math.abs(x - placed) < 0.5) then
+        return x, y
+    end
+end
+
+-- Moves each automatically placed EllesmereUI window against the band's
+-- edge, or back onto EllesmereUI's default when the option or the addon is
+-- off. Only the horizontal offset changes; EllesmereUI's vertical placement
+-- is kept.
+local function PlaceEllesmereWindows()
+    local profile = GetCurrentProfile()
+    local active = profile.enabled and profile.bags
+    local left, buffer
+    if active then
+        left, buffer = DesiredOffsets()
+    end
+    for _, spec in ipairs(ELLESMERE_WINDOWS) do
+        local window = _G[spec.global]
+        if window then
+            local x, y = GetEllesmereAutoAnchor(window, spec)
+            if x then
+                local target = spec.defaultX
+                if active then
+                    -- Anchor offsets are in the window's own scale
+                    -- (EllesmereUI scales its bags); the band is measured in
+                    -- UIParent units. Never place a window further out than
+                    -- EllesmereUI's own default.
+                    local scale = UIParentUnitsPerUnit(window)
+                    if spec.edge == "right" then
+                        target = math.min(spec.defaultX, -buffer / scale)
+                    else
+                        target = math.max(spec.defaultX, left / scale)
+                    end
+                end
+                if math.abs(target - x) >= 0.5 then
+                    -- Same point as EllesmereUI's own anchor, so this
+                    -- replaces it instead of adding a second one.
+                    window:SetPoint(spec.point, UIParent, spec.point, target, y)
+                end
+                ellesmerePlaced[window] = active and target or nil
+            end
+        end
+    end
+end
+
+local ellesmereHooked = {}
+
+local function InstallEllesmereHooks()
+    for _, spec in ipairs(ELLESMERE_WINDOWS) do
+        local window = _G[spec.global]
+        if window and not ellesmereHooked[window] then
+            ellesmereHooked[window] = true
+            -- Runs after EllesmereUI's own OnShow handlers, and so after it
+            -- has anchored the window.
+            window:HookScript("OnShow", PlaceEllesmereWindows)
+        end
+    end
+end
+
 local function ApplyOffsets()
     -- Attribute writes on secure handler frames are locked during combat;
     -- queue and re-apply on PLAYER_REGEN_ENABLED.
@@ -346,17 +460,20 @@ local function ApplyOffsets()
     local left, buffer = DesiredOffsets()
     local key = string.format("%.1f,%.1f", left, buffer)
     local applied = tostring(layoutHost) .. ":" .. key
-    if applied == lastApplied then
-        return
+    if applied ~= lastApplied then
+        lastApplied = applied
+        driver:SetAttribute("cs-offsets", key)
+        -- Reflow any open panels immediately from the new boundaries. This
+        -- is the same insecure-callable entry point addons have always
+        -- used; the actual repositioning runs in Blizzard's secure delegate.
+        UpdateUIPanelPositions()
     end
-    lastApplied = applied
 
-    driver:SetAttribute("cs-offsets", key)
-    -- Reflow any open panels immediately from the new boundaries. This is
-    -- the same insecure-callable entry point addons have always used; the
-    -- actual repositioning runs in Blizzard's secure delegate.
-    UpdateUIPanelPositions()
+    -- The bag placements depend on the enabled flag as well as the offsets,
+    -- which a toggle on a 100% band leaves unchanged, so they run outside
+    -- the dedupe; both are cheap no-ops while nothing is open.
     RefreshBagAnchors()
+    PlaceEllesmereWindows()
 end
 
 -- ---------------------------------------------------------------------------
@@ -465,6 +582,7 @@ local function BuildSettingsMenu()
         function(value)
             SetCurrentProfileValue("bags", value)
             RefreshBagAnchors()
+            PlaceEllesmereWindows()
             ShowPreview()
         end
     )
@@ -473,7 +591,9 @@ local function BuildSettingsMenu()
         "edge of the band instead of the right edge of the screen. Blizzard " ..
         "still stacks, scales and wraps them; they are only slid left, and " ..
         "never further right than Blizzard's own position next to the right " ..
-        "action bars.")
+        "action bars. With EllesmereUI, its bag window opens against the " ..
+        "right edge of the band and its bank window against the left edge, " ..
+        "unless you have dragged them somewhere else.")
 end
 
 SLASH_CENTERSTAGE1 = "/centerstage"
@@ -499,6 +619,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
             InitializeSettings()
             BuildSettingsMenu()
             InstallBagHook()
+            InstallEllesmereHooks()
         end
     elseif event == "PLAYER_REGEN_ENABLED" then
         if pendingApply then
@@ -506,9 +627,11 @@ frame:SetScript("OnEvent", function(self, event, arg1)
         end
     else
         if event == "PLAYER_ENTERING_WORLD" then
-            -- Blizzard_UIPanels_Game normally loads before us; make sure the
-            -- hook is in place once every addon is.
+            -- Blizzard_UIPanels_Game and EllesmereUIBags normally load
+            -- before us; make sure the hooks are in place once every addon
+            -- is.
             InstallBagHook()
+            InstallEllesmereHooks()
         end
         -- Resolution or scale changed (or fresh login): defer one frame so
         -- Blizzard finishes its own re-layout first, then re-apply since the
